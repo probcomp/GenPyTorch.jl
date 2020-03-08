@@ -4,15 +4,21 @@ using Gen
 using PyCall
 
 const torch = PyNULL()
-TORCH_DEVICE = PyNULL()
+const TORCH_DEVICE = PyNULL()
 
 function __init__()
     copy!(torch, pyimport("torch"))
-    TORCH_DEVICE = torch.cuda.is_available() ? torch.device("cuda:0") : torch.device("cpu")
+    copy!(TORCH_DEVICE, torch.cuda.is_available() ? torch.device("cuda:0") : torch.device("cpu"))
 end
 
+"""
+    set_torch_device!(d::String)
+
+Set the Torch device, used for all Torch computations. Can be any Torch device
+identifier, e.g. "cpu" or "cuda" or "cuda:0".
+"""
 function set_torch_device!(d)
-    TORCH_DEVICE = torch.device(d)
+    copy!(TORCH_DEVICE, torch.device(d))
 end
 
 struct TorchFunctionTrace <: Gen.Trace
@@ -27,6 +33,13 @@ Gen.get_choices(::TorchFunctionTrace) = EmptyChoiceMap()
 Gen.get_score(::TorchFunctionTrace) = 0.
 Gen.get_gen_fn(trace::TorchFunctionTrace) = trace.gen_fn
 
+
+"""
+    TorchArg(supports_gradients::Bool, dtype::PyObject)
+
+A description of an argument to the `forward` function of a Torch module.
+If `dtype` is `PyNULL()`, this argument is not a tensor.
+"""
 struct TorchArg
     supports_gradients :: Bool
     dtype :: PyObject
@@ -34,6 +47,12 @@ end
 
 is_tensor(arg::TorchArg) = arg.dtype != PyNULL()
 
+"""
+    gen_fn = TorchGenerativeFunction(torch_module::PyObject,
+                                     inputs::Vector{TorchArg},
+                                     n_outputs::Int)
+Construct a Torch generative function from a Torch module.
+"""
 struct TorchGenerativeFunction <: Gen.GenerativeFunction{Any,TorchFunctionTrace}
     torch_module :: PyObject
     inputs :: Vector{TorchArg}
@@ -134,7 +153,7 @@ function run_with_gradients(trace :: TorchFunctionTrace, retval_grad, acc_param_
     set_requires_grad!(gen_fn.torch_module, acc_param_grads)
 
     # Run the model
-    res = gen_fn.torch_module(arg_tensors...)
+    res = gen_fn.torch_module.to(TORCH_DEVICE)(arg_tensors...)
     torch_backward(gen_fn, res, retval_grad, multiplier)
     input_grads = [arg.supports_gradients && !isnothing(tensor.grad) ?
                     convert(Array{Float64}, tensor.grad.detach().cpu().numpy()) : nothing
@@ -153,10 +172,13 @@ function Gen.accumulate_param_gradients!(trace::TorchFunctionTrace, retval_grad,
     run_with_gradients(trace, retval_grad, true, multiplier)
 end
 
-Gen.get_params(gen_fn::TorchGenerativeFunction) = keys(gen_fn.params)
 
+function (gen_fn::TorchGenerativeFunction)(args...)
+    get_retval(simulate(gen_fn, args))
+end
 Gen.accepts_output_grad(gen_fn::TorchGenerativeFunction) = true
 Gen.has_argument_grads(gen_fn::TorchGenerativeFunction) = ([arg.supports_gradients for arg in gen_fn.inputs]...,)
+Gen.get_params(gen_fn::TorchGenerativeFunction) = keys(gen_fn.params)
 
 struct TorchOptimizer
     opt :: PyObject
@@ -173,6 +195,15 @@ function Gen.init_update_state(conf::ADAM, gen_fn::TorchGenerativeFunction, para
     TorchOptimizer(opt)
 end
 
+"""
+    TorchOptimConf(func::PyObject, args::Vector{Any}, kwargs::Dict{Symbol, Any})
+
+Can be used as the first argument to `ParamUpdate` to construct a parameter update
+based on an arbitrary `torch.optim` optimizer. The `func` argument should be the
+`torch.optim` optimizer (e.g. `torch.optim.SGD`), and the `args` and `kwargs` are
+the arguments and keyword arguments to the optimizer, e.g. for setting the learning
+rate. You need not include a list of parameters to optimize; Gen will handle that part.
+"""
 struct TorchOptimConf
     func   :: PyObject
     args   :: Vector{Any}
@@ -188,5 +219,7 @@ function Gen.apply_update!(state::TorchOptimizer)
     state.opt.step()
     state.opt.zero_grad()
 end
+
+export TorchGenerativeFunction, TorchArg, TorchOptimConf, set_torch_device!
 
 end

@@ -112,12 +112,20 @@ end
 
 Gen.project(::TorchFunctionTrace, ::Selection) = 0.
 
-function Gen.update(trace::TorchFunctionTrace, ::Tuple, ::Any, ::ChoiceMap)
-    (trace, 0., DefaultRetDiff(), EmptyChoiceMap())
+function Gen.update(trace::TorchFunctionTrace, args::Tuple, argdiffs::Tuple, ::ChoiceMap)
+    if all(x -> x isa NoChange, argdiffs)
+        return (trace, 0., NoChange(), EmptyChoiceMap())
+    end
+    trace = simulate(trace.gen_fn, args)
+    (trace, 0., UnknownChange(), EmptyChoiceMap())
 end
 
-function Gen.regenerate(trace::TorchFunctionTrace, ::Tuple, ::Any, ::Selection)
-    (trace, 0., DefaultRetDiff())
+function Gen.regenerate(trace::TorchFunctionTrace, args::Tuple, argdiffs::Tuple, ::Selection)
+    if all(x -> x isa NoChange, argdiffs)
+        return (trace, 0., NoChange())
+    end
+    trace = simulate(trace.gen_fn, args)
+    (trace, 0., UnknownChange())
 end
 
 function set_requires_grad!(torch_module, val)

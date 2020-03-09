@@ -10,6 +10,6 @@ makedocs(
 )
 
 deploydocs(
-    repo = "github.com/probcomp/GenPyTorch.git",
+    repo = "github.com/probcomp/GenPyTorch.jl.git",
     target = "build"
 )

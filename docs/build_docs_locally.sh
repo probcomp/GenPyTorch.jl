@@ -1,7 +1,10 @@
 #!/bin/sh
 
-# run this script from the GenTF/ directory, it will generate HTML
-# documentation under docs/build
+# run this script from the GenTF/ directory with the PYTHON environment variable set:
+
+# PYTHON=/path-to-python-env-with-torch-installed/bin/python ./docs/build_docs_locally.sh
+
+# it will generate HTML documentation under docs/build.
 
 julia --project=docs/ -e '
     using Pkg;

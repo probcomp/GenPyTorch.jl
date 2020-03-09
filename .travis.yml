@@ -27,7 +27,6 @@ jobs:
       script:
         - julia --project=docs/ -e 'using Pkg;
                                     Pkg.add(PackageSpec(url="https://github.com/probcomp/Gen"));
-                                    Pkg.develop(PackageSpec(path="$(pwd())/.."));
                                     Pkg.develop(PackageSpec(path=pwd()));
                                     Pkg.instantiate();
                                     Pkg.add("PyCall");

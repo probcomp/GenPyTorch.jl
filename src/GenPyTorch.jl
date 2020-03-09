@@ -4,21 +4,9 @@ using Gen
 using PyCall
 
 const torch = PyNULL()
-const TORCH_DEVICE = PyNULL()
 
 function __init__()
     copy!(torch, pyimport("torch"))
-    copy!(TORCH_DEVICE, torch.cuda.is_available() ? torch.device("cuda:0") : torch.device("cpu"))
-end
-
-"""
-    set_torch_device!(d::String)
-
-Set the Torch device, used for all Torch computations. Can be any Torch device
-identifier, e.g. "cpu" or "cuda" or "cuda:0".
-"""
-function set_torch_device!(d)
-    copy!(TORCH_DEVICE, torch.device(d))
 end
 
 struct TorchFunctionTrace <: Gen.Trace
@@ -52,6 +40,15 @@ is_tensor(arg::TorchArg) = arg.dtype != PyNULL()
                                      inputs::Vector{TorchArg},
                                      n_outputs::Int)
 Construct a Torch generative function from a Torch module.
+By default, computations will run on GPU if available and
+CPU otherwise.
+
+    gen_fn = TorchGenerativeFunction(torch_module::PyObject,
+                                     inputs::Vector{TorchArg},
+                                     n_outputs::Int,
+                                     device::PyObject)
+Construct a Torch generative function from a Torch module.
+Computations will be run on the given `device`.
 """
 struct TorchGenerativeFunction <: Gen.GenerativeFunction{Any,TorchFunctionTrace}
     torch_module :: PyObject
@@ -59,10 +56,18 @@ struct TorchGenerativeFunction <: Gen.GenerativeFunction{Any,TorchFunctionTrace}
     n_outputs :: Int
 
     # For fast lookup of parameters by name
+    device :: PyObject
     params :: Dict{String, PyObject}
-    function TorchGenerativeFunction(torch_module, inputs, n_outputs)
+    function TorchGenerativeFunction(torch_module, inputs, n_outputs, device)
+        torch_module = torch_module.to(device)
         parameters = collect(torch_module.named_parameters())
-        return new(torch_module, inputs, n_outputs, Dict([p[1] => p[2] for p in parameters]...))
+        return new(torch_module, inputs, n_outputs, device,
+                   Dict([p[1] => p[2] for p in parameters]...))
+    end
+
+    function TorchGenerativeFunction(torch_module, inputs, n_outputs)
+        device = torch.cuda.is_available() ? torch.device("cuda:0") : torch.device("cpu")
+        TorchGenerativeFunction(torch_module, inputs, n_outputs, device)
     end
 end
 
@@ -71,7 +76,7 @@ function Gen.simulate(gen_fn::TorchGenerativeFunction, args::Tuple)
     # Convert all arguments to tensors, moving to GPU if necessary.
     tensor_args = map(zip(gen_fn.inputs, args)) do (arg, value)
         if is_tensor(arg)
-          torch.as_tensor(value, dtype=arg.dtype).to(TORCH_DEVICE)
+          torch.as_tensor(value, dtype=arg.dtype).to(gen_fn.device)
         else
           value
         end
@@ -80,7 +85,7 @@ function Gen.simulate(gen_fn::TorchGenerativeFunction, args::Tuple)
     # Run the model without gradients
     retval = nothing
     @pywith torch.no_grad() begin
-        retval = gen_fn.torch_module.to(TORCH_DEVICE)(tensor_args...)
+        retval = gen_fn.torch_module(tensor_args...)
     end
 
     # Wrap results in a trace.
@@ -126,11 +131,11 @@ function torch_backward(gen_fn :: TorchGenerativeFunction, res :: PyObject, retv
         return
     end
     if gen_fn.n_outputs == 1
-        res.backward(torch.as_tensor(retval_grad * multiplier * -1, dtype=res.dtype).to(TORCH_DEVICE))
+        res.backward(torch.as_tensor(retval_grad * multiplier * -1, dtype=res.dtype).to(gen_fn.device))
     else
         for i=1:gen_fn.n_outputs
             if !isnothing(retval_grad[i])
-                res[i].backward(torch.as_tensor(retval_grad[i], dtype=res.dtype).to(TORCH_DEVICE) * multiplier * -1)
+                res[i].backward(torch.as_tensor(retval_grad[i], dtype=res.dtype).to(gen_fn.device) * multiplier * -1)
             end
         end
     end
@@ -142,7 +147,7 @@ function run_with_gradients(trace :: TorchFunctionTrace, retval_grad, acc_param_
 
     arg_tensors = map(zip(gen_fn.inputs, args)) do (arg, value)
         if is_tensor(arg)
-            value = torch.as_tensor(value, dtype=arg.dtype).to(TORCH_DEVICE)
+            value = torch.as_tensor(value, dtype=arg.dtype).to(gen_fn.device)
         end
         if arg.supports_gradients
             value.requires_grad_()
@@ -153,7 +158,7 @@ function run_with_gradients(trace :: TorchFunctionTrace, retval_grad, acc_param_
     set_requires_grad!(gen_fn.torch_module, acc_param_grads)
 
     # Run the model
-    res = gen_fn.torch_module.to(TORCH_DEVICE)(arg_tensors...)
+    res = gen_fn.torch_module(arg_tensors...)
     torch_backward(gen_fn, res, retval_grad, multiplier)
     input_grads = [arg.supports_gradients && !isnothing(tensor.grad) ?
                     convert(Array{Float64}, tensor.grad.detach().cpu().numpy()) : nothing
@@ -220,6 +225,6 @@ function Gen.apply_update!(state::TorchOptimizer)
     state.opt.zero_grad()
 end
 
-export TorchGenerativeFunction, TorchArg, TorchOptimConf, set_torch_device!
+export TorchGenerativeFunction, TorchArg, TorchOptimConf
 
 end

@@ -210,5 +210,4 @@ end
 TorchGenerativeFunction
 TorchArg
 TorchOptimConf
-set_torch_device!
 ```

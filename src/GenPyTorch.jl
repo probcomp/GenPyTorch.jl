@@ -168,8 +168,8 @@ function run_with_gradients(trace :: TorchFunctionTrace, retval_grad, acc_param_
     # Run the model
     res = gen_fn.torch_module(arg_tensors...)
     torch_backward(gen_fn, res, retval_grad, multiplier)
-    input_grads = -[arg.supports_gradients && !isnothing(tensor.grad) ?
-                    convert(Array{Float64}, tensor.grad.detach().cpu().numpy()) : nothing
+    input_grads = [arg.supports_gradients && !isnothing(tensor.grad) ?
+                    -convert(Array{Float64}, tensor.grad.detach().cpu().numpy()) : nothing
                     for (arg, tensor) in zip(gen_fn.inputs, arg_tensors)]
     (input_grads...,)
 end

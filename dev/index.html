@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Home · GenPyTorch</title><link href="https://cdnjs.cloudflare.com/ajax/libs/normalize/4.2.0/normalize.min.css" rel="stylesheet" type="text/css"/><link href="https://fonts.googleapis.com/css?family=Lato|Roboto+Mono" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.6.3/css/font-awesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/default.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.2.0/require.min.js" data-main="assets/documenter.js"></script><script src="siteinfo.js"></script><script src="../versions.js"></script><link href="assets/documenter.css" rel="stylesheet" type="text/css"/></head><body><nav class="toc"><h1>GenPyTorch</h1><select id="version-selector" onChange="window.location.href=this.value" style="visibility: hidden"></select><form class="search" id="search-form" action="search/"><input id="search-query" name="q" type="text" placeholder="Search docs"/></form><ul><li class="current"><a class="toctext" href>Home</a><ul class="internal"><li><a class="toctext" href="#Installation-1">Installation</a></li><li><a class="toctext" href="#Calling-the-PyTorch-API-1">Calling the PyTorch API</a></li><li><a class="toctext" href="#PyTorch-Generative-Functions-1">PyTorch Generative Functions</a></li><li><a class="toctext" href="#API-1">API</a></li></ul></li></ul></nav><article id="docs"><header><nav><ul><li><a href>Home</a></li></ul><a class="edit-page" href="https://github.com/probcomp/GenPyTorch.jl/blob/master/docs/src/index.md"><span class="fa"></span> Edit on GitHub</a></nav><hr/><div id="topbar"><span>Home</span><a class="fa fa-bars" href="#"></a></div></header><h1><a class="nav-anchor" id="GenPyTorch-1" href="#GenPyTorch-1">GenPyTorch</a></h1><p><em>PyTorch plugin for the Gen probabilistic programming system</em></p><p>The Julia package <a href="https://github.com/probcomp/GenPyTorch">GenPyTorch</a> allows for <a href="https://github.com/probcomp/Gen">Gen</a> generative functions to invoke PyTorch modules executed on the GPU. Users construct a PyTorch module using the familiar Torch Python API, and then package it in a <code>TorchGenerativeFunction</code>, which is a type of generative function provided by GenPyTorch. Generative functions written in Gen&#39;s built-in modeling language can seamlessly call <code>TorchGenerativeFunction</code>s. GenPyTorch integrates Gen&#39;s automatic differentiation with PyTorch&#39;s gradients, allowing automatic differentiation of computations that combine Julia and PyTorch code.</p><h2><a class="nav-anchor" id="Installation-1" href="#Installation-1">Installation</a></h2><p>The installation requires an installation of Python and an installation of the <a href="https://pytorch.org/get-started/locally/">torch</a> Python package. We recommend creating a Python virtual environment and installing Torch via <code>pip</code> in that environment. In what follows, let <code>&lt;python&gt;</code> stand for the absolute path of a Python executable that has access to the <code>torch</code> package.</p><p>From the Julia REPL, type <code>]</code> to enter the Pkg REPL mode and run:</p><pre><code class="language-none">pkg&gt; add https://github.com/probcomp/GenPyTorch</code></pre><p>In a Julia REPL, build the <code>PyCall</code> module so that it will use the correct Python environment:</p><pre><code class="language-julia">using Pkg; ENV[&quot;PYTHON&quot;] = &quot;&lt;python&gt;&quot;; Pkg.build(&quot;PyCall&quot;)</code></pre><p>Check that intended python environment is indeed being used with:</p><pre><code class="language-julia">using PyCall; println(PyCall.python)</code></pre><p>If you encounter problems, see https://github.com/JuliaPy/PyCall.jl#specifying-the-python-version</p><h2><a class="nav-anchor" id="Calling-the-PyTorch-API-1" href="#Calling-the-PyTorch-API-1">Calling the PyTorch API</a></h2><p>GenPyTorch uses the Julia package <a href="https://github.com/JuliaPy/PyCall.jl">PyCall</a> to invoke the <a href="https://pytorch.org/docs/stable/torch.html">PyTorch API</a>.</p><p>First, import PyCall:</p><pre><code class="language-julia">using PyCall</code></pre><p>You can define a PyTorch module using Python directly, enclosing any Python in <code>py&quot;&quot;&quot;...&quot;&quot;&quot;</code> strings:</p><pre><code class="language-julia">py&quot;&quot;&quot;
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+class MyModel(torch.nn.Module):
+  def __init__(self):
+    super(MyModel, self).__init__()
+    self.conv1 = nn.Conv2d(1, 6, 3)
+    self.conv2 = nn.Conv2d(6, 16, 3)
+    self.fc1 = nn.Linear(16 * 6 * 6, 120)
+    self.fc2 = nn.Linear(120, 84)
+    self.fc3 = nn.Linear(84, 10)
+
+  def forward(self, x):
+    x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
+    x = F.max_pool2d(F.relu(self.conv2(x)), 2)
+    x = x.view(-1, self.num_flat_features(x))
+    x = F.relu(self.fc1(x))
+    x = F.relu(self.fc2(x))
+    x = self.fc3(x)
+    return x
+
+  def num_flat_features(self, x):
+    size = x.size()[1:]  # all dimensions except the batch dimension
+    num_features = 1
+    for s in size:
+      num_features *= s
+      return num_features
+&quot;&quot;&quot;</code></pre><p>You can then instantiate your model:</p><pre><code class="language-julia">model = py&quot;MyModel()&quot;</code></pre><p>The Julia variable <code>model</code> now holds a <code>PyObject</code> representing your neural network. This can be wrapped in a Torch Generative Function (described in the next section).</p><p>An alternative to specifying your model entirely in Python is to use PyCall to work in Julia, which may be useful if your module needs to call some Julia code you&#39;ve written. To do this, use <code>pyimport</code> to import <code>torch</code>, and <code>@pydef</code> to define your module:</p><pre><code class="language-julia">using PyCall
+
+torch = pyimport(&quot;torch&quot;)
+nn = torch.nn
+F = nn.functional
+
+@pydef mutable struct MyModel &lt;: nn.Module
+    function __init__(self)
+        # Note the use of pybuiltin(:super): built in Python functions
+        # like `super` or `str` or `slice` are all accessed using
+        # `pybuiltin`.
+        pybuiltin(:super)(Model, self).__init__()
+        self.conv1 = nn.Conv2d(1, 6, 3)
+        self.conv2 = nn.Conv2d(6, 16, 3)
+        self.fc1 = nn.Linear(16 * 6 * 6, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
+    end
+
+    function forward(self, x)
+        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
+        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
+        x = x.view(-1, self.num_flat_features(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+    end
+
+    function num_flat_features(self, x)
+        # Note: x.size() returns a tuple, not a tensor.
+        # Therefore, we treat it like a Julia tuple and
+        # index using 1-based indexing.
+        size = x.size()[2:end]
+        num_features = 1
+        for s in size
+            num_features *= s
+        end
+        return num_features
+    end
+end</code></pre><p>You can instantiate the model without <code>py&quot;...&quot;</code>:</p><pre><code class="language-julia">model = MyModel()</code></pre><h2><a class="nav-anchor" id="PyTorch-Generative-Functions-1" href="#PyTorch-Generative-Functions-1">PyTorch Generative Functions</a></h2><p>Once you&#39;ve instantiated your model as a <code>PyObject</code> (as we did with the variable <code>model</code> above), you can convert it into a generative function:</p><pre><code class="language-julia">model_gf = TorchGenerativeFunction(model, inputs, n_outputs)</code></pre><p>Here, <code>n_outputs</code> is the number of output tensors returned by the <code>forward</code> function, and <code>inputs</code> should be a list of <code>TorchArg</code> objects, one for each argument to your model&#39;s <code>forward</code> function. A <code>TorchArg</code> is constructed with two arguments: a Boolean <code>supports_gradients</code> argument, for whether gradients should flow through that argument, and a <code>dtype</code> argument, which can either be <code>PyNULL()</code> for non-tensor arguments, or the <code>dtype</code> of the input tensor (e.g. <code>torch.float</code> or <code>torch.double</code>):</p><pre><code class="language-julia"># If you used the `@pydef` approach, you can write torch.float directly below,
+# without enclosing it in a py&quot;...&quot; string.
+model_gf = TorchGenerativeFunction(model, [TorchArg(true, py&quot;torch.float&quot;)], 1)</code></pre><p>The <code>model_gf</code> function can now be used as an ordinary generative function. In particular, it can be called from Gen&#39;s static or dynamic DSL. As a generative function, <code>model_gf</code> is deterministic; it makes no random choices and always returns empty choicemaps. But it does have trainable parameters:</p><pre><code class="language-julia">Gen.get_params(model_gf)</code></pre><pre><code class="language-none">Base.KeySet for a Dict{String,PyObject} with 10 entries. Keys:
+  &quot;fc3.weight&quot;
+  &quot;conv1.bias&quot;
+  &quot;fc1.weight&quot;
+  &quot;conv2.weight&quot;
+  &quot;fc1.bias&quot;
+  &quot;conv1.weight&quot;
+  &quot;fc3.bias&quot;
+  &quot;fc2.bias&quot;
+  &quot;fc2.weight&quot;
+  &quot;conv2.bias&quot;</code></pre><p>These can be trained the same way that any trainable parameters are trained in Gen. First, use the Torch generative function from within a probabilistic model:</p><pre><code class="language-julia">@gen function classify_mnist(images)
+  classifications ~ my_model(images)
+  for i=1:length(images)
+    {:class_for =&gt; i} ~ categorical(softmax(classifications[i, :]))
+  end
+end</code></pre><p>Then, generate a trace from your data:</p><pre><code class="language-julia">param_update = ParamUpdate(ADAM(0.01, 0.9, 0.999, 1e-8), my_model)
+for i=1:100
+  xs, ys = next_batch()
+  constraints = choicemap([(:class_for =&gt; i) =&gt; ys[i] for i=1:length(xs)]...)
+  trace = Gen.generate(classify_mnist, (xs,), constraints)
+  accumulate_param_gradients!(trace)
+  apply!(param_update)
+end</code></pre><h2><a class="nav-anchor" id="API-1" href="#API-1">API</a></h2><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="GenPyTorch.TorchGenerativeFunction" href="#GenPyTorch.TorchGenerativeFunction"><code>GenPyTorch.TorchGenerativeFunction</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-none">gen_fn = TorchGenerativeFunction(torch_module::PyObject,
+                                 inputs::Vector{TorchArg},
+                                 n_outputs::Int)</code></pre><p>Construct a Torch generative function from a Torch module. By default, computations will run on GPU if available and CPU otherwise.</p><pre><code class="language-none">gen_fn = TorchGenerativeFunction(torch_module::PyObject,
+                                 inputs::Vector{TorchArg},
+                                 n_outputs::Int,
+                                 device::PyObject)</code></pre><p>Construct a Torch generative function from a Torch module. Computations will be run on the given <code>device</code>.</p></div></div><a class="source-link" target="_blank" href="https://github.com/probcomp/GenPyTorch.jl/blob/8139b71fc05e564deb536d5b789f8b96babec57f/src/GenPyTorch.jl#L38-L52">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="GenPyTorch.TorchArg" href="#GenPyTorch.TorchArg"><code>GenPyTorch.TorchArg</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-none">TorchArg(supports_gradients::Bool, dtype::PyObject)</code></pre><p>A description of an argument to the <code>forward</code> function of a Torch module. If <code>dtype</code> is <code>PyNULL()</code>, this argument is not a tensor.</p></div></div><a class="source-link" target="_blank" href="https://github.com/probcomp/GenPyTorch.jl/blob/8139b71fc05e564deb536d5b789f8b96babec57f/src/GenPyTorch.jl#L25-L30">source</a></section><section class="docstring"><div class="docstring-header"><a class="docstring-binding" id="GenPyTorch.TorchOptimConf" href="#GenPyTorch.TorchOptimConf"><code>GenPyTorch.TorchOptimConf</code></a> — <span class="docstring-category">Type</span>.</div><div><div><pre><code class="language-none">TorchOptimConf(func::PyObject, args::Vector{Any}, kwargs::Dict{Symbol, Any})</code></pre><p>Can be used as the first argument to <code>ParamUpdate</code> to construct a parameter update based on an arbitrary <code>torch.optim</code> optimizer. The <code>func</code> argument should be the <code>torch.optim</code> optimizer (e.g. <code>torch.optim.SGD</code>), and the <code>args</code> and <code>kwargs</code> are the arguments and keyword arguments to the optimizer, e.g. for setting the learning rate. You need not include a list of parameters to optimize; Gen will handle that part.</p></div></div><a class="source-link" target="_blank" href="https://github.com/probcomp/GenPyTorch.jl/blob/8139b71fc05e564deb536d5b789f8b96babec57f/src/GenPyTorch.jl#L211-L219">source</a></section><footer><hr/></footer></article></body></html>
